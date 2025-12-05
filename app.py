@@ -96,25 +96,19 @@ def formatar_data_coluna(serie):
 def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
         return ""
-
     texto = str(valor_str).strip()
     texto = texto.lstrip("+- ")
     texto_num = texto.replace(",", ".")
-
     try:
         numero = float(texto_num)
     except:
         return valor_str
-
     if is_despesa:
         numero = -numero
-
     formatado = "{:,.2f}".format(abs(numero))
     formatado = formatado.replace(",", "X").replace(".", ",").replace("X", ".")
-
     if numero < 0:
         formatado = "-" + formatado
-
     return formatado
 
 def converter_w4(df_w4, df_categorias_prep):
@@ -129,19 +123,16 @@ def converter_w4(df_w4, df_categorias_prep):
 
     col_desc_cat = "Descrição da categoria financeira"
     df["nome_base_w4"] = df[col_cat].astype(str).apply(normalize_text)
-
     df = df.merge(
         df_categorias_prep[["nome_base", col_desc_cat]],
         left_on="nome_base_w4",
         right_on="nome_base",
         how="left"
     )
-
     df["Categoria_final"] = df[col_desc_cat].where(
         df[col_desc_cat].notna(),
         df[col_cat]
     )
-
     if "Processo" in df.columns:
         proc_lower = df["Processo"].astype(str).str.lower()
         mask_emp = proc_lower.str.contains("emprestimo", na=False)
@@ -157,7 +148,6 @@ def converter_w4(df_w4, df_categorias_prep):
         (detalhe_lower.str.contains("custo", na=False) |
          detalhe_lower.str.contains("despesa", na=False))
     )
-
     df["is_despesa"] = cond_despesa_fluxo | cond_despesa_palavra
 
     df["Valor_str_final"] = [
@@ -179,13 +169,11 @@ def converter_w4(df_w4, df_categorias_prep):
 
     return out
 
-
 def carregar_arquivo_w4(arquivo):
     if arquivo.name.lower().endswith((".xlsx", ".xls")):
         return pd.read_excel(arquivo)
     else:
         return pd.read_csv(arquivo, sep=";", encoding="latin1")
-
 
 # ============================
 # CARREGA CATEGORIAS
@@ -196,7 +184,7 @@ df_cat_raw = pd.read_excel(CATEGORIAS_ARQ)
 df_cat_prep = preparar_categorias(df_cat_raw)
 
 # ============================
-# INTERFACE STREAMLIT
+# INTERFACE
 # ============================
 
 st.title("🎄 Conversor W4 🎄")
@@ -218,7 +206,6 @@ if arquivo_w4:
             df_final = converter_w4(df_w4, df_cat_prep)
 
             st.success("Arquivo convertido com sucesso! 🎅✨")
-            st.dataframe(df_final.head(20))
 
             buffer = BytesIO()
             df_final.to_excel(buffer, index=False)
