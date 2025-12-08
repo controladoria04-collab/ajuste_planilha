@@ -89,15 +89,34 @@ def formatar_data_coluna(serie):
 def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
         return None
+
     txt = str(valor_str).strip().lstrip("+- ")
     txt = txt.replace(".", "").replace(",", ".")
+
     try:
         numero = float(txt)
     except:
         return None
+
+    # aplica negativo se for despesa
     if is_despesa:
         numero = -numero
-    return numero
+
+    # Agora convertemos para string com vírgula e sem milhar
+    # mas depois reconvertemos para número REAL
+    numero_formatado = f"{numero:.2f}".replace(".", ",")
+
+    # Converter de volta para float com vírgula → Excel entende como número?
+    # NÃO. Precisamos enviar como STRING com vírgula,
+    # mas marcar o formato da célula no Excel como texto → ERRADO.
+    #
+    # SOLUÇÃO CERTA:
+    # salvamos como string com vírgula e deixamos o Excel reinterpretar como número.
+    #
+    # MAS: Excel só entende número com vírgula se engine = openpyxl
+    # e se dtype não for forçado.
+
+    return numero_formatado
 
 # ============================
 # FUNÇÃO PRINCIPAL DE CONVERSÃO
@@ -256,7 +275,7 @@ if arq_w4:
             st.success("Arquivo convertido com sucesso!")
 
             buffer = BytesIO()
-            df_final.to_excel(buffer, index=False)
+            df_final.to_excel(buffer, index=False, engine="openpyxl")
             buffer.seek(0)
 
             st.download_button(
