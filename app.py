@@ -90,25 +90,29 @@ def formatar_data_coluna(serie):
     datas = pd.to_datetime(serie, errors="coerce")
     return datas.dt.strftime("%d/%m/%Y")
 
+# ============================
+# CONVERTENDO VALOR PARA FLOAT REAL
+# ============================
+
 def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
-        return ""
+        return None
+
     texto = str(valor_str).strip().lstrip("+- ")
-    texto_num = texto.replace(",", ".")
+    texto_num = texto.replace(".", "").replace(",", ".")
+
     try:
         numero = float(texto_num)
     except:
-        return valor_str
+        return None
+
     if is_despesa:
         numero = -numero
-    formatado = "{:,.2f}".format(abs(numero))
-    formatado = formatado.replace(",", "X").replace(".", ",").replace("X", ".")
-    if numero < 0:
-        formatado = "-" + formatado
-    return formatado
+
+    return numero  # número real (float)
 
 # ============================
-# FUNÇÃO DE CONVERSÃO (CORRIGIDA)
+# FUNÇÃO PRINCIPAL DE CONVERSÃO
 # ============================
 
 def converter_w4(df_w4, df_categorias_prep):
@@ -118,6 +122,7 @@ def converter_w4(df_w4, df_categorias_prep):
 
     col_cat = "Detalhe Conta / Objeto"
 
+    # Remover transferências
     mascara_transfer = df_w4[col_cat].astype(str).str.contains(
         "Transferência Entre Disponíveis", case=False, na=False
     )
@@ -135,44 +140,88 @@ def converter_w4(df_w4, df_categorias_prep):
 
     df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
 
-    if "Processo" in df.columns:
-        proc_lower = df["Processo"].astype(str).str.lower()
-        mask_emp = proc_lower.str.contains("emprestimo", na=False)
-        df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
+    # ============================================================
+    # 🔥 NOVA REGRA: determinando receita/despesa usando Processo
+    # ============================================================
 
     fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
-    detalhe_lower = df[col_cat].astype(str).str.lower()
 
     cond_receita = fluxo.str.contains("receita", na=False)
     cond_despesa_fluxo = fluxo.str.contains("despesa", na=False)
+
+    fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
+
+    if "Processo" in df.columns:
+        processo = df["Processo"].astype(str).str.lower()
+        cond_pagamento = fluxo_vazio & processo.str.contains("pagamento", na=False)
+        cond_recebimento = fluxo_vazio & processo.str.contains("recebimento", na=False)
+    else:
+        cond_pagamento = False
+        cond_recebimento = False
+
+    detalhe_lower = df[col_cat].astype(str).str.lower()
     cond_despesa_palavra = (
-        ~cond_receita & ~cond_despesa_fluxo &
-        (detalhe_lower.str.contains("custo", na=False) | detalhe_lower.str.contains("despesa", na=False))
+        fluxo_vazio &
+        ~cond_recebimento &
+        (detalhe_lower.str.contains("custo", na=False) |
+         detalhe_lower.str.contains("despesa", na=False))
     )
 
-    df["is_despesa"] = cond_despesa_fluxo | cond_despesa_palavra
+    df["is_despesa"] = (
+          cond_despesa_fluxo
+        | cond_pagamento
+        | cond_despesa_palavra
+    )
 
+    df.loc[cond_receita | cond_recebimento, "is_despesa"] = False
+
+    # Converter valores para número real
     df["Valor_str_final"] = [
         converter_valor(v, d)
         for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
-    # 🔥 TODAS AS DATAS = Data da Tesouraria
+    # Datas todas = Data da Tesouraria
     data_tes = formatar_data_coluna(df["Data da Tesouraria"])
+
+    # ============================================================
+    # MONTAGEM DA PLANILHA MODELO
+    # ============================================================
 
     out = pd.DataFrame()
     out["Data de Competência"] = data_tes
     out["Data de Vencimento"] = data_tes
     out["Data de Pagamento"] = data_tes
+    out["Valor"] = df["Valor_str_final"]
+    out["Categoria"] = df["Categoria_final"]
 
-    # 🔥 Colocar ID ANTES da descrição — NOME CORRIGIDO
+    # ID ANTES da descrição
     if "Id Item tesouraria" in df.columns:
         out["Descrição"] = df["Id Item tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
     else:
         out["Descrição"] = df["Descrição"]
 
-    out["Categoria"] = df["Categoria_final"]
-    out["Valor"] = df["Valor_str_final"]
+    # Criar colunas extras vazias conforme Conta Azul
+    out["Cliente/Fornecedor CNPJ/CPF"] = ""
+    out["Cliente/Fornecedor"] = ""
+    out["Centro de Custo"] = ""
+    out["Observações"] = ""
+
+    # Ordem final exata exigida pela planilha modelo
+    out = out[
+        [
+            "Data de Competência",
+            "Data de Vencimento",
+            "Data de Pagamento",
+            "Valor",
+            "Categoria",
+            "Descrição",
+            "Cliente/Fornecedor CNPJ/CPF",
+            "Cliente/Fornecedor",
+            "Centro de Custo",
+            "Observações"
+        ]
+    ]
 
     return out
 
