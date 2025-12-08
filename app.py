@@ -111,11 +111,17 @@ def converter_valor(valor_str, is_despesa):
         formatado = "-" + formatado
     return formatado
 
+# ============================
+# FUNÇÃO CORRIGIDA (alterações solicitadas)
+# ============================
+
 def converter_w4(df_w4, df_categorias_prep):
     if "Detalhe Conta / Objeto" not in df_w4.columns:
         raise ValueError("Coluna 'Detalhe Conta / Objeto' não existe no arquivo W4.")
+
     col_cat = "Detalhe Conta / Objeto"
 
+    # Remove transferências
     mascara_transfer = df_w4[col_cat].astype(str).str.contains(
         "Transferência Entre Disponíveis", case=False, na=False
     )
@@ -123,21 +129,25 @@ def converter_w4(df_w4, df_categorias_prep):
 
     col_desc_cat = "Descrição da categoria financeira"
     df["nome_base_w4"] = df[col_cat].astype(str).apply(normalize_text)
+
     df = df.merge(
         df_categorias_prep[["nome_base", col_desc_cat]],
         left_on="nome_base_w4",
         right_on="nome_base",
         how="left"
     )
+
     df["Categoria_final"] = df[col_desc_cat].where(
         df[col_desc_cat].notna(),
         df[col_cat]
     )
+
+    # Processo contém "emprestimo"
     if "Processo" in df.columns:
         proc_lower = df["Processo"].astype(str).str.lower()
-        mask_emp = proc_lower.str.contains("emprestimo", na=False)
-        df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
+        df.loc[proc_lower.str.contains("emprestimo", na=False), "Categoria_final"] = df["Processo"]
 
+    # Determinar receita/despesa
     fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
     detalhe_lower = df[col_cat].astype(str).str.lower()
 
@@ -145,9 +155,9 @@ def converter_w4(df_w4, df_categorias_prep):
     cond_despesa_fluxo = fluxo.str.contains("despesa", na=False)
     cond_despesa_palavra = (
         ~cond_receita & ~cond_despesa_fluxo &
-        (detalhe_lower.str.contains("custo", na=False) |
-         detalhe_lower.str.contains("despesa", na=False))
+        (detalhe_lower.str.contains("custo", na=False) | detalhe_lower.str.contains("despesa", na=False))
     )
+
     df["is_despesa"] = cond_despesa_fluxo | cond_despesa_palavra
 
     df["Valor_str_final"] = [
@@ -155,25 +165,25 @@ def converter_w4(df_w4, df_categorias_prep):
         for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
-    data_comp = formatar_data_coluna(df["Data da Tesouraria"])
-    data_venc = formatar_data_coluna(df.get("Data de Vencimento", df["Data da Tesouraria"]))
-    data_pag = formatar_data_coluna(df.get("Data de Pagamento", df["Data da Tesouraria"]))
+    # 🔥 Todas as datas = Data da Tesouraria
+    data_tes = formatar_data_coluna(df["Data da Tesouraria"])
 
+    # 🔥 Montagem da planilha modelo
     out = pd.DataFrame()
-    out["Data de Competência"] = data_comp
-    out["Data de Vencimento"] = data_venc
-    out["Data de Pagamento"] = data_pag
-    out["Descrição"] = df["Descrição"]
+    out["Data de Competência"] = data_tes
+    out["Data de Vencimento"] = data_tes
+    out["Data de Pagamento"] = data_tes
+
+    # 🔥 Colocar ID ANTES da descrição
+    if "Id Item Tesouraria" in df.columns:
+        out["Descrição"] = df["Id Item Tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
+    else:
+        out["Descrição"] = df["Descrição"]
+
     out["Categoria"] = df["Categoria_final"]
     out["Valor"] = df["Valor_str_final"]
 
     return out
-
-def carregar_arquivo_w4(arquivo):
-    if arquivo.name.lower().endswith((".xlsx", ".xls")):
-        return pd.read_excel(arquivo)
-    else:
-        return pd.read_csv(arquivo, sep=";", encoding="latin1")
 
 # ============================
 # CARREGA CATEGORIAS
