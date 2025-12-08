@@ -67,6 +67,7 @@ def normalize_text(texto):
     texto = re.sub(r'[^a-z0-9]+', ' ', texto)
     return re.sub(r'\s+', ' ', texto).strip()
 
+
 def preparar_categorias(df_cat):
     col_desc = "Descrição da categoria financeira"
     df = df_cat.copy()
@@ -81,26 +82,28 @@ def preparar_categorias(df_cat):
     df["nome_base"] = df[col_desc].apply(tirar_codigo_inicial).apply(normalize_text)
     return df
 
+
 def formatar_data_coluna(serie):
     datas = pd.to_datetime(serie, errors="coerce")
     return datas.dt.strftime("%d/%m/%Y")
 
-# Conversão numérica real
+
+# ============================
+# CONVERTER VALOR (MANTER FORMATO DO W4)
+# ============================
+
 def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
         return ""
 
-    # valor exatamente como está no W4
     valor = str(valor_str).strip()
-
-    # remover qualquer sinal existente para recolocar o correto
     valor_sem_sinal = valor.lstrip("+- ").strip()
 
-    # aplicar sinal
     if is_despesa:
         return "-" + valor_sem_sinal
     else:
         return valor_sem_sinal
+
 
 # ============================
 # FUNÇÃO PRINCIPAL DE CONVERSÃO
@@ -131,27 +134,24 @@ def converter_w4(df_w4, df_categorias_prep):
 
     df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
 
-    # Empréstimos
+    # EMPRÉSTIMOS (REGRA ANTIGA)
     if "Processo" in df.columns:
-        proc_lower = df["Processo"].astype(str).str.lower()
-        mask_emp = proc_lower.str.contains("emprestimo", na=False)
+        processo_lower = df["Processo"].astype(str).str.lower()
+        mask_emp = processo_lower.str.contains("emprestimo", na=False)
         df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
 
     # ===============================
-    # NOVA REGRA: Fluxo vazio → usar Processo
+    # NOVAS REGRAS: Fluxo vazio → usar Processo
     # ===============================
 
     fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
-
     cond_fluxo_receita = fluxo.str.contains("receita", na=False)
     cond_fluxo_despesa = fluxo.str.contains("despesa", na=False)
     fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
 
-    # Normalizar Processo
+    # Normalização do Processo
     if "Processo" in df.columns:
         proc = df["Processo"].astype(str).str.lower()
-
-        # remove acentos
         proc = proc.apply(lambda t: unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii"))
 
         cond_pagamento = fluxo_vazio & proc.str.contains("pagament", na=False)
@@ -169,6 +169,7 @@ def converter_w4(df_w4, df_categorias_prep):
          detalhe_lower.str.contains("despesa", na=False))
     )
 
+    # Regra final
     df["is_despesa"] = (
         cond_fluxo_despesa |
         cond_pagamento |
@@ -203,7 +204,7 @@ def converter_w4(df_w4, df_categorias_prep):
     else:
         out["Descrição"] = df["Descrição"]
 
-    # Colunas extras
+    # Colunas extras do Conta Azul
     out["Cliente/Fornecedor"] = ""
     out["CNPJ/CPF Cliente/Fornecedor"] = ""
     out["Centro de Custo"] = ""
@@ -226,99 +227,6 @@ def converter_w4(df_w4, df_categorias_prep):
 
     return out
 
-
-    # ======================================
-    # REGRA ANTIGA MANTIDA — EMPRÉSTIMOS
-    # ======================================
-    if "Processo" in df.columns:
-        processo_lower = df["Processo"].astype(str).str.lower()
-        mask_emp = processo_lower.str.contains("emprestimo", na=False)
-        df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
-
-    # ======================================
-    # NOVA REGRA: Fluxo vazio → Processo
-    # ======================================
-
-    fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
-
-    cond_fluxo_receita = fluxo.str.contains("receita", na=False)
-    cond_fluxo_despesa = fluxo.str.contains("despesa", na=False)
-    fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
-
-if "Processo" in df.columns:
-    proc = df["Processo"].astype(str).str.lower().str.normalize("NFKD")
-    proc = proc.str.encode("ascii", "ignore").str.decode("ascii")  # remove acentos
-
-    cond_pagamento = fluxo_vazio & proc.str.contains("pagament", na=False)
-    cond_recebimento = fluxo_vazio & proc.str.contains("receb", na=False)
-else:
-    cond_pagamento = False
-    cond_recebimento = False
-
-
-    detalhe_lower = df[col_cat].astype(str).str.lower()
-    cond_desp_palavra = (
-        fluxo_vazio &
-        ~cond_rec &
-        (detalhe_lower.str.contains("custo", na=False) |
-         detalhe_lower.str.contains("despesa", na=False))
-    )
-
-    df["is_despesa"] = (
-        cond_fluxo_despesa |
-        cond_pag |
-        cond_desp_palavra
-    )
-
-    df.loc[cond_fluxo_receita | cond_rec, "is_despesa"] = False
-
-    # Valor final
-    df["Valor_str_final"] = [
-        converter_valor(v, d)
-        for v, d in zip(df["Valor total"], df["is_despesa"])
-    ]
-
-    # Datas
-    data_tes = formatar_data_coluna(df["Data da Tesouraria"])
-
-    # ============================
-    # MONTAGEM FINAL DO ARQUIVO
-    # ============================
-
-    out = pd.DataFrame()
-    out["Data de Competência"] = data_tes
-    out["Data de Vencimento"] = data_tes
-    out["Data de Pagamento"] = data_tes
-    out["Valor"] = df["Valor_str_final"]
-    out["Categoria"] = df["Categoria_final"]
-
-    # descrição com ID
-    if "Id Item tesouraria" in df.columns:
-        out["Descrição"] = df["Id Item tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
-    else:
-        out["Descrição"] = df["Descrição"]
-
-    out["Cliente/Fornecedor"] = ""
-    out["CNPJ/CPF Cliente/Fornecedor"] = ""
-    out["Centro de Custo"] = ""
-    out["Observações"] = ""
-
-    out = out[
-        [
-            "Data de Competência",
-            "Data de Vencimento",
-            "Data de Pagamento",
-            "Valor",
-            "Categoria",
-            "Descrição",
-            "Cliente/Fornecedor",
-            "CNPJ/CPF Cliente/Fornecedor",
-            "Centro de Custo",
-            "Observações"
-        ]
-    ]
-    
-    return out
 
 # ============================
 # CARREGAR ARQUIVO W4
@@ -330,12 +238,14 @@ def carregar_arquivo_w4(arq):
     else:
         return pd.read_csv(arq, sep=";", encoding="latin1")
 
+
 # ============================
 # CARREGAR CATEGORIAS
 # ============================
 
 df_cat_raw = pd.read_excel("categorias_contabeis.xlsx")
 df_cat_prep = preparar_categorias(df_cat_raw)
+
 
 # ============================
 # INTERFACE STREAMLIT
@@ -345,7 +255,7 @@ st.title("🎄 Conversor W4 🎄")
 st.markdown("### Envie o arquivo W4 (CSV ou Excel)")
 
 arq_w4 = st.file_uploader(
-    "Selecione o arquivo W4", 
+    "Selecione o arquivo W4",
     type=["csv", "xlsx", "xls"]
 )
 
@@ -370,5 +280,6 @@ if arq_w4:
 
         except Exception as e:
             st.error(f"Erro: {e}")
+
 else:
     st.info("Faça o upload do arquivo acima.")
