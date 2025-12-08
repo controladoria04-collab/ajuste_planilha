@@ -148,6 +148,7 @@ def converter_w4(df_w4, df_categorias_prep):
     if "Processo" in df.columns:
         processo = df["Processo"].astype(str).str.lower()
         cond_pag = fluxo_vazio & processo.str.contains("pagamento", na=False)
+        cond_pag = fluxo_vazio & processo.str.contains("imobilizado", na=False)
         cond_rec = fluxo_vazio & processo.str.contains("recebimento", na=False)
     else:
         cond_pag = False
@@ -195,8 +196,8 @@ def converter_w4(df_w4, df_categorias_prep):
     else:
         out["Descrição"] = df["Descrição"]
 
-    out["Cliente/Fornecedor CNPJ/CPF"] = ""
     out["Cliente/Fornecedor"] = ""
+    out["CNPJ/CPF Cliente/Fornecedor"] = ""
     out["Centro de Custo"] = ""
     out["Observações"] = ""
 
@@ -208,8 +209,8 @@ def converter_w4(df_w4, df_categorias_prep):
             "Valor",
             "Categoria",
             "Descrição",
-            "Cliente/Fornecedor CNPJ/CPF",
             "Cliente/Fornecedor",
+            "CNPJ/CPF Cliente/Fornecedor",
             "Centro de Custo",
             "Observações"
         ]
