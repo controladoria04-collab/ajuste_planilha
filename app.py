@@ -148,13 +148,13 @@ def converter_w4(df_w4, df_categorias_prep):
     cond_fluxo_despesa = fluxo.str.contains("despesa", na=False)
     fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
 
-    if "Processo" in df.columns:
+if "Processo" in df.columns:
     proc = df["Processo"].astype(str).str.lower().str.normalize("NFKD")
     proc = proc.str.encode("ascii", "ignore").str.decode("ascii")  # remove acentos
 
     cond_pagamento = fluxo_vazio & proc.str.contains("pagament", na=False)
     cond_recebimento = fluxo_vazio & proc.str.contains("receb", na=False)
-    else:
+else:
     cond_pagamento = False
     cond_recebimento = False
 
