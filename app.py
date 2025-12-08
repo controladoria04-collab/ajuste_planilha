@@ -165,9 +165,9 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Data de Vencimento"] = data_tes
     out["Data de Pagamento"] = data_tes
 
-    # 🔥 ID ANTES da descrição
-    if "Id Item Tesouraria" in df.columns:
-        out["Descrição"] = df["Id Item Tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
+    # 🔥 Colocar ID ANTES da descrição — NOME CORRIGIDO
+    if "Id Item tesouraria" in df.columns:
+        out["Descrição"] = df["Id Item tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
     else:
         out["Descrição"] = df["Descrição"]
 
