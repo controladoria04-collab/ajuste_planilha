@@ -90,13 +90,13 @@ def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
         return ""
 
-    # valor exatamente como vem do W4
+    # valor exatamente como está no W4
     valor = str(valor_str).strip()
 
-    # remover sinais existentes
+    # remover qualquer sinal existente para recolocar o correto
     valor_sem_sinal = valor.lstrip("+- ").strip()
 
-    # aplicar apenas o sinal correto
+    # aplicar sinal
     if is_despesa:
         return "-" + valor_sem_sinal
     else:
@@ -149,13 +149,15 @@ def converter_w4(df_w4, df_categorias_prep):
     fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
 
     if "Processo" in df.columns:
-        processo = df["Processo"].astype(str).str.lower()
-        cond_pag = fluxo_vazio & processo.str.contains("pagamento", na=False)
-        cond_pag = fluxo_vazio & processo.str.contains("imobilizado", na=False)
-        cond_rec = fluxo_vazio & processo.str.contains("recebimento", na=False)
+    proc = df["Processo"].astype(str).str.lower().str.normalize("NFKD")
+    proc = proc.str.encode("ascii", "ignore").str.decode("ascii")  # remove acentos
+
+    cond_pagamento = fluxo_vazio & proc.str.contains("pagament", na=False)
+    cond_recebimento = fluxo_vazio & proc.str.contains("receb", na=False)
     else:
-        cond_pag = False
-        cond_rec = False
+    cond_pagamento = False
+    cond_recebimento = False
+
 
     detalhe_lower = df[col_cat].astype(str).str.lower()
     cond_desp_palavra = (
