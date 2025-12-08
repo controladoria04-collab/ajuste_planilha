@@ -87,23 +87,36 @@ def formatar_data_coluna(serie):
     datas = pd.to_datetime(serie, errors="coerce")
     return datas.dt.strftime("%d/%m/%Y")
 
-
 # ============================
-# CONVERTER VALOR (MANTER FORMATO DO W4)
+# CONVERTER VALOR
 # ============================
 
 def converter_valor(valor_str, is_despesa):
+    """
+    Regra:
+    - Se veio como string do W4 (ex: '1300,6' ou '1.300,50'): mantém o formato e só ajusta o sinal.
+    - Se veio como número (float/int, ex: 1300.6): converte para string com vírgula como decimal (ex: '1300,60').
+    """
+
     if pd.isna(valor_str):
         return ""
 
-    valor = str(valor_str).strip()
-    valor_sem_sinal = valor.lstrip("+- ").strip()
-
-    if is_despesa:
-        return "-" + valor_sem_sinal
+    # Caso venha como número (float/int) do pandas
+    if isinstance(valor_str, (int, float)):
+        # formata com 2 casas, ponto decimal, depois troca o ponto por vírgula
+        base = f"{valor_str:.2f}".replace(".", ",")
     else:
-        return valor_sem_sinal
+        # mantém o texto exatamente como está (só vamos tratar sinal)
+        base = str(valor_str).strip()
 
+    # remover qualquer sinal existente
+    base_sem_sinal = base.lstrip("+- ").strip()
+
+    # aplicar sinal conforme despesa/receita
+    if is_despesa:
+        return "-" + base_sem_sinal
+    else:
+        return base_sem_sinal
 
 # ============================
 # FUNÇÃO PRINCIPAL DE CONVERSÃO
@@ -169,22 +182,23 @@ def converter_w4(df_w4, df_categorias_prep):
          detalhe_lower.str.contains("despesa", na=False))
     )
 
-    # Regra final
+    # Regra final de despesa
     df["is_despesa"] = (
         cond_fluxo_despesa |
         cond_pagamento |
         cond_desp_palavra
     )
 
+    # Receita explícita no fluxo ou no processo
     df.loc[cond_fluxo_receita | cond_recebimento, "is_despesa"] = False
 
-    # Valor final
+    # Valor final (formato W4 + sinais)
     df["Valor_str_final"] = [
         converter_valor(v, d)
         for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
-    # Datas
+    # Datas (todas = Data da Tesouraria)
     data_tes = formatar_data_coluna(df["Data da Tesouraria"])
 
     # ============================
@@ -227,7 +241,6 @@ def converter_w4(df_w4, df_categorias_prep):
 
     return out
 
-
 # ============================
 # CARREGAR ARQUIVO W4
 # ============================
@@ -238,14 +251,12 @@ def carregar_arquivo_w4(arq):
     else:
         return pd.read_csv(arq, sep=";", encoding="latin1")
 
-
 # ============================
 # CARREGAR CATEGORIAS
 # ============================
 
 df_cat_raw = pd.read_excel("categorias_contabeis.xlsx")
 df_cat_prep = preparar_categorias(df_cat_raw)
-
 
 # ============================
 # INTERFACE STREAMLIT
