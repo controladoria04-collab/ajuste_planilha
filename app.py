@@ -92,27 +92,17 @@ def formatar_data_coluna(serie):
 # ============================
 
 def converter_valor(valor_str, is_despesa):
-    """
-    Regra:
-    - Se veio como string do W4 (ex: '1300,6' ou '1.300,50'): mantém o formato e só ajusta o sinal.
-    - Se veio como número (float/int, ex: 1300.6): converte para string com vírgula como decimal (ex: '1300,60').
-    """
-
     if pd.isna(valor_str):
         return ""
 
-    # Caso venha como número (float/int) do pandas
+    # número vindo como float
     if isinstance(valor_str, (int, float)):
-        # formata com 2 casas, ponto decimal, depois troca o ponto por vírgula
         base = f"{valor_str:.2f}".replace(".", ",")
     else:
-        # mantém o texto exatamente como está (só vamos tratar sinal)
         base = str(valor_str).strip()
 
-    # remover qualquer sinal existente
     base_sem_sinal = base.lstrip("+- ").strip()
 
-    # aplicar sinal conforme despesa/receita
     if is_despesa:
         return "-" + base_sem_sinal
     else:
@@ -134,6 +124,11 @@ def converter_w4(df_w4, df_categorias_prep):
         "Transferência Entre Disponíveis", case=False, na=False)
     df = df_w4.loc[~mascara_transf].copy()
 
+    # REMOVER EMPRESTIMOS DA BASE (NOVA REGRA)
+    if "Processo" in df.columns:
+        proc_rem = df["Processo"].astype(str).str.lower()
+        df = df.loc[~proc_rem.str.contains("emprestimo", na=False)].copy()
+
     # Categorias
     col_desc_cat = "Descrição da categoria financeira"
     df["nome_base_w4"] = df[col_cat].astype(str).apply(normalize_text)
@@ -147,28 +142,25 @@ def converter_w4(df_w4, df_categorias_prep):
 
     df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
 
-    # EMPRÉSTIMOS (REGRA ANTIGA)
-    if "Processo" in df.columns:
-        processo_lower = df["Processo"].astype(str).str.lower()
-        mask_emp = processo_lower.str.contains("emprestimo", na=False)
-        df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
-
     # ===============================
-    # NOVAS REGRAS: Fluxo vazio → usar Processo
+    # REGRAS DE FLUXO E PROCESSO
     # ===============================
 
     fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
+
     cond_fluxo_receita = fluxo.str.contains("receita", na=False)
     cond_fluxo_despesa = fluxo.str.contains("despesa", na=False)
+
     fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
 
-    # Normalização do Processo
+    # Normalizar processo
     if "Processo" in df.columns:
         proc = df["Processo"].astype(str).str.lower()
         proc = proc.apply(lambda t: unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii"))
 
         cond_pagamento = fluxo_vazio & proc.str.contains("pagament", na=False)
         cond_recebimento = fluxo_vazio & proc.str.contains("receb", na=False)
+
     else:
         cond_pagamento = False
         cond_recebimento = False
@@ -178,21 +170,27 @@ def converter_w4(df_w4, df_categorias_prep):
     cond_desp_palavra = (
         fluxo_vazio &
         ~cond_recebimento &
-        (detalhe_lower.str.contains("custo", na=False) |
-         detalhe_lower.str.contains("despesa", na=False))
+        (
+            detalhe_lower.str.contains("custo", na=False) |
+            detalhe_lower.str.contains("despesa", na=False)
+        )
     )
 
-    # Regra final de despesa
+    # NOVA REGRA: se FLUXO contém imobilizado → é despesa
+    cond_imobilizado = fluxo.str.contains("imobilizado", na=False)
+
+    # Regra final combinada
     df["is_despesa"] = (
         cond_fluxo_despesa |
         cond_pagamento |
-        cond_desp_palavra
+        cond_desp_palavra |
+        cond_imobilizado
     )
 
-    # Receita explícita no fluxo ou no processo
+    # Receita explícita
     df.loc[cond_fluxo_receita | cond_recebimento, "is_despesa"] = False
 
-    # Valor final (formato W4 + sinais)
+    # Valor final (formato W4 + sinal)
     df["Valor_str_final"] = [
         converter_valor(v, d)
         for v, d in zip(df["Valor total"], df["is_despesa"])
@@ -212,13 +210,11 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Valor"] = df["Valor_str_final"]
     out["Categoria"] = df["Categoria_final"]
 
-    # Descrição com ID antes
     if "Id Item tesouraria" in df.columns:
         out["Descrição"] = df["Id Item tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
     else:
         out["Descrição"] = df["Descrição"]
 
-    # Colunas extras do Conta Azul
     out["Cliente/Fornecedor"] = ""
     out["CNPJ/CPF Cliente/Fornecedor"] = ""
     out["Centro de Custo"] = ""
