@@ -90,29 +90,26 @@ def formatar_data_coluna(serie):
     datas = pd.to_datetime(serie, errors="coerce")
     return datas.dt.strftime("%d/%m/%Y")
 
-# ============================
-# CONVERTENDO VALOR PARA FLOAT REAL
-# ============================
-
+# 🔥 AGORA SALVAMOS VALOR COMO NÚMERO REAL, NÃO TEXTO
 def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
         return None
 
-    texto = str(valor_str).strip().lstrip("+- ")
-    texto_num = texto.replace(".", "").replace(",", ".")
+    txt = str(valor_str).strip().lstrip("+- ")
+    txt = txt.replace(".", "").replace(",", ".")
 
     try:
-        numero = float(texto_num)
+        numero = float(txt)
     except:
         return None
 
     if is_despesa:
         numero = -numero
 
-    return numero  # número real (float)
+    return numero
 
 # ============================
-# FUNÇÃO PRINCIPAL DE CONVERSÃO
+# FUNÇÃO PRINCIPAL — CONVERSÃO
 # ============================
 
 def converter_w4(df_w4, df_categorias_prep):
@@ -124,10 +121,10 @@ def converter_w4(df_w4, df_categorias_prep):
 
     # Remover transferências
     mascara_transfer = df_w4[col_cat].astype(str).str.contains(
-        "Transferência Entre Disponíveis", case=False, na=False
-    )
+        "Transferência Entre Disponíveis", case=False, na=False)
     df = df_w4.loc[~mascara_transfer].copy()
 
+    # Preparar categorias
     col_desc_cat = "Descrição da categoria financeira"
     df["nome_base_w4"] = df[col_cat].astype(str).apply(normalize_text)
 
@@ -140,143 +137,10 @@ def converter_w4(df_w4, df_categorias_prep):
 
     df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
 
-    # ============================================================
-    # 🔥 NOVA REGRA: determinando receita/despesa usando Processo
-    # ============================================================
-
-    fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
-
-    cond_receita = fluxo.str.contains("receita", na=False)
-    cond_despesa_fluxo = fluxo.str.contains("despesa", na=False)
-
-    fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
-
+    # 🔥 REGRA DOS EMPRÉSTIMOS — MANTIDA COMO NO CÓDIGO ORIGINAL
     if "Processo" in df.columns:
-        processo = df["Processo"].astype(str).str.lower()
-        cond_pagamento = fluxo_vazio & processo.str.contains("pagamento", na=False)
-        cond_recebimento = fluxo_vazio & processo.str.contains("recebimento", na=False)
-    else:
-        cond_pagamento = False
-        cond_recebimento = False
+        proc_lower = df["Processo"].astype(str).str.lower()
+        mask_emp = proc_lower.str.contains("emprestimo", na=False)
+        df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
 
-    detalhe_lower = df[col_cat].astype(str).str.lower()
-    cond_despesa_palavra = (
-        fluxo_vazio &
-        ~cond_recebimento &
-        (detalhe_lower.str.contains("custo", na=False) |
-         detalhe_lower.str.contains("despesa", na=False))
-    )
-
-    df["is_despesa"] = (
-          cond_despesa_fluxo
-        | cond_pagamento
-        | cond_despesa_palavra
-    )
-
-    df.loc[cond_receita | cond_recebimento, "is_despesa"] = False
-
-    # Converter valores para número real
-    df["Valor_str_final"] = [
-        converter_valor(v, d)
-        for v, d in zip(df["Valor total"], df["is_despesa"])
-    ]
-
-    # Datas todas = Data da Tesouraria
-    data_tes = formatar_data_coluna(df["Data da Tesouraria"])
-
-    # ============================================================
-    # MONTAGEM DA PLANILHA MODELO
-    # ============================================================
-
-    out = pd.DataFrame()
-    out["Data de Competência"] = data_tes
-    out["Data de Vencimento"] = data_tes
-    out["Data de Pagamento"] = data_tes
-    out["Valor"] = df["Valor_str_final"]
-    out["Categoria"] = df["Categoria_final"]
-
-    # ID ANTES da descrição
-    if "Id Item tesouraria" in df.columns:
-        out["Descrição"] = df["Id Item tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
-    else:
-        out["Descrição"] = df["Descrição"]
-
-    # Criar colunas extras vazias conforme Conta Azul
-    out["Cliente/Fornecedor CNPJ/CPF"] = ""
-    out["Cliente/Fornecedor"] = ""
-    out["Centro de Custo"] = ""
-    out["Observações"] = ""
-
-    # Ordem final exata exigida pela planilha modelo
-    out = out[
-        [
-            "Data de Competência",
-            "Data de Vencimento",
-            "Data de Pagamento",
-            "Valor",
-            "Categoria",
-            "Descrição",
-            "Cliente/Fornecedor CNPJ/CPF",
-            "Cliente/Fornecedor",
-            "Centro de Custo",
-            "Observações"
-        ]
-    ]
-
-    return out
-
-# ============================
-# FUNÇÃO PARA CARREGAR ARQUIVO DO W4
-# ============================
-
-def carregar_arquivo_w4(arquivo):
-    if arquivo.name.lower().endswith((".xlsx", ".xls")):
-        return pd.read_excel(arquivo)
-    else:
-        return pd.read_csv(arquivo, sep=";", encoding="latin1")
-
-# ============================
-# CARREGA CATEGORIAS
-# ============================
-
-CATEGORIAS_ARQ = "categorias_contabeis.xlsx"
-df_cat_raw = pd.read_excel(CATEGORIAS_ARQ)
-df_cat_prep = preparar_categorias(df_cat_raw)
-
-# ============================
-# INTERFACE STREAMLIT
-# ============================
-
-st.title("🎄 Conversor W4 🎄")
-
-st.markdown("""
-### Envie o arquivo W4 (CSV ou Excel)
-Ele será convertido automaticamente para o formato aceito pelo Conta Azul.
-""")
-
-arquivo_w4 = st.file_uploader("Selecione o arquivo W4", type=["csv", "xlsx", "xls"])
-
-if arquivo_w4:
-    if st.button("Converter arquivo"):
-        try:
-            df_w4 = carregar_arquivo_w4(arquivo_w4)
-            df_final = converter_w4(df_w4, df_cat_prep)
-
-            st.success("Arquivo convertido com sucesso! 🎅✨")
-
-            buffer = BytesIO()
-            df_final.to_excel(buffer, index=False)
-            buffer.seek(0)
-
-            st.download_button(
-                label="🎁 Baixar arquivo convertido",
-                data=buffer,
-                file_name="conta_azul_convertido.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        except Exception as e:
-            st.error(f"Erro: {e}")
-
-else:
-    st.info("Faça o upload do arquivo W4 acima 🎄")
+    # =========
