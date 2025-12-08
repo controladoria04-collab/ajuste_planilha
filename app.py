@@ -62,15 +62,12 @@ label, .stMarkdown, .stButton>button {
 """, unsafe_allow_html=True)
 
 # ============================
-# FUNÇÕES AUXILIARES (sem alterar nada)
+# FUNÇÕES AUXILIARES
 # ============================
 
 def normalize_text(texto):
     texto = str(texto).lower().strip()
-    texto = ''.join(
-        c for c in unicodedata.normalize('NFKD', texto)
-        if not unicodedata.combining(c)
-    )
+    texto = ''.join(c for c in unicodedata.normalize('NFKD', texto) if not unicodedata.combining(c))
     texto = re.sub(r'[^a-z0-9]+', ' ', texto)
     texto = re.sub(r'\s+', ' ', texto).strip()
     return texto
@@ -96,8 +93,7 @@ def formatar_data_coluna(serie):
 def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
         return ""
-    texto = str(valor_str).strip()
-    texto = texto.lstrip("+- ")
+    texto = str(valor_str).strip().lstrip("+- ")
     texto_num = texto.replace(",", ".")
     try:
         numero = float(texto_num)
@@ -112,16 +108,16 @@ def converter_valor(valor_str, is_despesa):
     return formatado
 
 # ============================
-# FUNÇÃO CORRIGIDA (alterações solicitadas)
+# FUNÇÃO DE CONVERSÃO (CORRIGIDA)
 # ============================
 
 def converter_w4(df_w4, df_categorias_prep):
+
     if "Detalhe Conta / Objeto" not in df_w4.columns:
         raise ValueError("Coluna 'Detalhe Conta / Objeto' não existe no arquivo W4.")
 
     col_cat = "Detalhe Conta / Objeto"
 
-    # Remove transferências
     mascara_transfer = df_w4[col_cat].astype(str).str.contains(
         "Transferência Entre Disponíveis", case=False, na=False
     )
@@ -137,17 +133,13 @@ def converter_w4(df_w4, df_categorias_prep):
         how="left"
     )
 
-    df["Categoria_final"] = df[col_desc_cat].where(
-        df[col_desc_cat].notna(),
-        df[col_cat]
-    )
+    df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
 
-    # Processo contém "emprestimo"
     if "Processo" in df.columns:
         proc_lower = df["Processo"].astype(str).str.lower()
-        df.loc[proc_lower.str.contains("emprestimo", na=False), "Categoria_final"] = df["Processo"]
+        mask_emp = proc_lower.str.contains("emprestimo", na=False)
+        df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
 
-    # Determinar receita/despesa
     fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
     detalhe_lower = df[col_cat].astype(str).str.lower()
 
@@ -165,16 +157,15 @@ def converter_w4(df_w4, df_categorias_prep):
         for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
-    # 🔥 Todas as datas = Data da Tesouraria
+    # 🔥 TODAS AS DATAS = Data da Tesouraria
     data_tes = formatar_data_coluna(df["Data da Tesouraria"])
 
-    # 🔥 Montagem da planilha modelo
     out = pd.DataFrame()
     out["Data de Competência"] = data_tes
     out["Data de Vencimento"] = data_tes
     out["Data de Pagamento"] = data_tes
 
-    # 🔥 Colocar ID ANTES da descrição
+    # 🔥 ID ANTES da descrição
     if "Id Item Tesouraria" in df.columns:
         out["Descrição"] = df["Id Item Tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
     else:
@@ -186,6 +177,16 @@ def converter_w4(df_w4, df_categorias_prep):
     return out
 
 # ============================
+# FUNÇÃO PARA CARREGAR ARQUIVO DO W4
+# ============================
+
+def carregar_arquivo_w4(arquivo):
+    if arquivo.name.lower().endswith((".xlsx", ".xls")):
+        return pd.read_excel(arquivo)
+    else:
+        return pd.read_csv(arquivo, sep=";", encoding="latin1")
+
+# ============================
 # CARREGA CATEGORIAS
 # ============================
 
@@ -194,7 +195,7 @@ df_cat_raw = pd.read_excel(CATEGORIAS_ARQ)
 df_cat_prep = preparar_categorias(df_cat_raw)
 
 # ============================
-# INTERFACE
+# INTERFACE STREAMLIT
 # ============================
 
 st.title("🎄 Conversor W4 🎄")
@@ -204,10 +205,7 @@ st.markdown("""
 Ele será convertido automaticamente para o formato aceito pelo Conta Azul.
 """)
 
-arquivo_w4 = st.file_uploader(
-    "Selecione o arquivo W4",
-    type=["csv", "xlsx", "xls"]
-)
+arquivo_w4 = st.file_uploader("Selecione o arquivo W4", type=["csv", "xlsx", "xls"])
 
 if arquivo_w4:
     if st.button("Converter arquivo"):
