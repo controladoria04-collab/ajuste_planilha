@@ -118,6 +118,7 @@ def converter_w4(df_w4, df_categorias_prep):
         "Transferência Entre Disponíveis", case=False, na=False)
     df = df_w4.loc[~mascara_transf].copy()
 
+    # Categorias
     col_desc_cat = "Descrição da categoria financeira"
     df["nome_base_w4"] = df[col_cat].astype(str).apply(normalize_text)
 
@@ -129,6 +130,102 @@ def converter_w4(df_w4, df_categorias_prep):
     )
 
     df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
+
+    # Empréstimos
+    if "Processo" in df.columns:
+        proc_lower = df["Processo"].astype(str).str.lower()
+        mask_emp = proc_lower.str.contains("emprestimo", na=False)
+        df.loc[mask_emp, "Categoria_final"] = df.loc[mask_emp, "Processo"]
+
+    # ===============================
+    # NOVA REGRA: Fluxo vazio → usar Processo
+    # ===============================
+
+    fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
+
+    cond_fluxo_receita = fluxo.str.contains("receita", na=False)
+    cond_fluxo_despesa = fluxo.str.contains("despesa", na=False)
+    fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
+
+    # Normalizar Processo
+    if "Processo" in df.columns:
+        proc = df["Processo"].astype(str).str.lower()
+
+        # remove acentos
+        proc = proc.apply(lambda t: unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii"))
+
+        cond_pagamento = fluxo_vazio & proc.str.contains("pagament", na=False)
+        cond_recebimento = fluxo_vazio & proc.str.contains("receb", na=False)
+    else:
+        cond_pagamento = False
+        cond_recebimento = False
+
+    detalhe_lower = df[col_cat].astype(str).str.lower()
+
+    cond_desp_palavra = (
+        fluxo_vazio &
+        ~cond_recebimento &
+        (detalhe_lower.str.contains("custo", na=False) |
+         detalhe_lower.str.contains("despesa", na=False))
+    )
+
+    df["is_despesa"] = (
+        cond_fluxo_despesa |
+        cond_pagamento |
+        cond_desp_palavra
+    )
+
+    df.loc[cond_fluxo_receita | cond_recebimento, "is_despesa"] = False
+
+    # Valor final
+    df["Valor_str_final"] = [
+        converter_valor(v, d)
+        for v, d in zip(df["Valor total"], df["is_despesa"])
+    ]
+
+    # Datas
+    data_tes = formatar_data_coluna(df["Data da Tesouraria"])
+
+    # ============================
+    # MONTAGEM FINAL
+    # ============================
+
+    out = pd.DataFrame()
+    out["Data de Competência"] = data_tes
+    out["Data de Vencimento"] = data_tes
+    out["Data de Pagamento"] = data_tes
+    out["Valor"] = df["Valor_str_final"]
+    out["Categoria"] = df["Categoria_final"]
+
+    # Descrição com ID antes
+    if "Id Item tesouraria" in df.columns:
+        out["Descrição"] = df["Id Item tesouraria"].astype(str) + " " + df["Descrição"].astype(str)
+    else:
+        out["Descrição"] = df["Descrição"]
+
+    # Colunas extras
+    out["Cliente/Fornecedor"] = ""
+    out["CNPJ/CPF Cliente/Fornecedor"] = ""
+    out["Centro de Custo"] = ""
+    out["Observações"] = ""
+
+    out = out[
+        [
+            "Data de Competência",
+            "Data de Vencimento",
+            "Data de Pagamento",
+            "Valor",
+            "Categoria",
+            "Descrição",
+            "Cliente/Fornecedor",
+            "CNPJ/CPF Cliente/Fornecedor",
+            "Centro de Custo",
+            "Observações"
+        ]
+    ]
+
+    return out
+
 
     # ======================================
     # REGRA ANTIGA MANTIDA — EMPRÉSTIMOS
@@ -220,7 +317,7 @@ else:
             "Observações"
         ]
     ]
-
+    
     return out
 
 # ============================
