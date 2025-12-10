@@ -69,17 +69,17 @@ def normalize_text(texto):
 
 
 def preparar_categorias(df_cat):
-    col_desc = "Descrição da categoria financeira"
+    col = "Descrição da categoria financeira"
     df = df_cat.copy()
 
-    def tirar_codigo_inicial(txt):
+    def tirar_codigo(txt):
         txt = str(txt).strip()
-        partes = txt.split(" ", 1)
-        if len(partes) == 2 and any(ch.isdigit() for ch in partes[0]):
-            return partes[1].strip()
+        parts = txt.split(" ", 1)
+        if len(parts) == 2 and any(ch.isdigit() for ch in parts[0]):
+            return parts[1].strip()
         return txt
 
-    df["nome_base"] = df[col_desc].apply(tirar_codigo_inicial).apply(normalize_text)
+    df["nome_base"] = df[col].apply(tirar_codigo).apply(normalize_text)
     return df
 
 
@@ -87,29 +87,22 @@ def formatar_data_coluna(serie):
     datas = pd.to_datetime(serie, errors="coerce")
     return datas.dt.strftime("%d/%m/%Y")
 
-# ============================
-# CONVERTER VALOR
-# ============================
 
 def converter_valor(valor_str, is_despesa):
     if pd.isna(valor_str):
         return ""
 
-    # número vindo como float
     if isinstance(valor_str, (int, float)):
         base = f"{valor_str:.2f}".replace(".", ",")
     else:
         base = str(valor_str).strip()
 
     base_sem_sinal = base.lstrip("+- ").strip()
+    return ("-" if is_despesa else "") + base_sem_sinal
 
-    if is_despesa:
-        return "-" + base_sem_sinal
-    else:
-        return base_sem_sinal
 
 # ============================
-# FUNÇÃO PRINCIPAL DE CONVERSÃO
+# FUNÇÃO PRINCIPAL
 # ============================
 
 def converter_w4(df_w4, df_categorias_prep):
@@ -120,16 +113,11 @@ def converter_w4(df_w4, df_categorias_prep):
     col_cat = "Detalhe Conta / Objeto"
 
     # Remover transferências
-    mascara_transf = df_w4[col_cat].astype(str).str.contains(
-        "Transferência Entre Disponíveis", case=False, na=False)
-    df = df_w4.loc[~mascara_transf].copy()
+    df = df_w4.loc[
+        ~df_w4[col_cat].astype(str).str.contains("Transferência Entre Disponíveis", case=False, na=False)
+    ].copy()
 
-    # REMOVER EMPRESTIMOS DA BASE (NOVA REGRA)
-    if "Processo" in df.columns:
-        proc_rem = df["Processo"].astype(str).str.lower()
-        df = df.loc[~proc_rem.str.contains("emprestimo", na=False)].copy()
-
-    # Categorias
+    # Arquivo categorias
     col_desc_cat = "Descrição da categoria financeira"
     df["nome_base_w4"] = df[col_cat].astype(str).apply(normalize_text)
 
@@ -142,66 +130,68 @@ def converter_w4(df_w4, df_categorias_prep):
 
     df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
 
-    # ===============================
-    # REGRAS DE FLUXO E PROCESSO
-    # ===============================
+    # =======================
+    # PROCESSOS / EMPRÉSTIMO
+    # =======================
 
     fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
-
+    fluxo_vazio = fluxo.str.strip().isin(["", "none", "nan"])
     cond_fluxo_receita = fluxo.str.contains("receita", na=False)
     cond_fluxo_despesa = fluxo.str.contains("despesa", na=False)
 
-    fluxo_vazio = fluxo.str.strip().isin(["", "nan", "none"])
+    proc_original = df.get("Processo", pd.Series("", index=df.index)).astype(str)
+    proc = proc_original.str.lower()
+    proc = proc.apply(lambda t: unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii"))
 
-    # Normalizar processo
-    if "Processo" in df.columns:
-        proc = df["Processo"].astype(str).str.lower()
-        proc = proc.apply(lambda t: unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii"))
+    pessoa = df.get("Pessoa", pd.Series("", index=df.index)).astype(str)
 
-        cond_pagamento = fluxo_vazio & proc.str.contains("pagament", na=False)
-        cond_recebimento = fluxo_vazio & proc.str.contains("receb", na=False)
+    cond_emprestimo = proc.str.contains("emprestimo", na=False)
+    cond_pag_emp = proc.str.contains("pagamento", na=False) & cond_emprestimo
+    cond_rec_emp = proc.str.contains("recebimento", na=False) & cond_emprestimo
 
-    else:
-        cond_pagamento = False
-        cond_recebimento = False
+    df.loc[cond_pag_emp, "Categoria_final"] = proc_original[cond_pag_emp] + " " + pessoa[cond_pag_emp]
+    df.loc[cond_rec_emp, "Categoria_final"] = proc_original[cond_rec_emp] + " " + pessoa[cond_rec_emp]
+    df.loc[cond_emprestimo & ~cond_pag_emp & ~cond_rec_emp, "Categoria_final"] = proc_original[cond_emprestimo]
+
+    # =======================
+    # CLASSIFICAÇÃO DESPESA/RECEITA
+    # =======================
 
     detalhe_lower = df[col_cat].astype(str).str.lower()
 
-    cond_desp_palavra = (
+    cond_palavra_despesa = (
         fluxo_vazio &
-        ~cond_recebimento &
+        ~(cond_rec_emp) &
         (
             detalhe_lower.str.contains("custo", na=False) |
             detalhe_lower.str.contains("despesa", na=False)
         )
     )
 
-    # NOVA REGRA: se FLUXO contém imobilizado → é despesa
     cond_imobilizado = fluxo.str.contains("imobilizado", na=False)
 
-    # Regra final combinada
     df["is_despesa"] = (
         cond_fluxo_despesa |
-        cond_pagamento |
-        cond_desp_palavra |
+        cond_pag_emp |
+        cond_palavra_despesa |
         cond_imobilizado
     )
 
-    # Receita explícita
-    df.loc[cond_fluxo_receita | cond_recebimento, "is_despesa"] = False
+    df.loc[cond_fluxo_receita | cond_rec_emp, "is_despesa"] = False
 
-    # Valor final (formato W4 + sinal)
+    # =======================
+    # VALOR + DATAS
+    # =======================
+
     df["Valor_str_final"] = [
-        converter_valor(v, d)
-        for v, d in zip(df["Valor total"], df["is_despesa"])
+        converter_valor(v, d) for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
-    # Datas (todas = Data da Tesouraria)
     data_tes = formatar_data_coluna(df["Data da Tesouraria"])
 
-    # ============================
+    # =======================
     # MONTAGEM FINAL
-    # ============================
+    # =======================
 
     out = pd.DataFrame()
     out["Data de Competência"] = data_tes
@@ -219,21 +209,6 @@ def converter_w4(df_w4, df_categorias_prep):
     out["CNPJ/CPF Cliente/Fornecedor"] = ""
     out["Centro de Custo"] = ""
     out["Observações"] = ""
-
-    out = out[
-        [
-            "Data de Competência",
-            "Data de Vencimento",
-            "Data de Pagamento",
-            "Valor",
-            "Categoria",
-            "Descrição",
-            "Cliente/Fornecedor",
-            "CNPJ/CPF Cliente/Fornecedor",
-            "Centro de Custo",
-            "Observações"
-        ]
-    ]
 
     return out
 
@@ -255,16 +230,13 @@ df_cat_raw = pd.read_excel("categorias_contabeis.xlsx")
 df_cat_prep = preparar_categorias(df_cat_raw)
 
 # ============================
-# INTERFACE STREAMLIT
+# INTERFACE
 # ============================
 
 st.title("🎄 Conversor W4 🎄")
 st.markdown("### Envie o arquivo W4 (CSV ou Excel)")
 
-arq_w4 = st.file_uploader(
-    "Selecione o arquivo W4",
-    type=["csv", "xlsx", "xls"]
-)
+arq_w4 = st.file_uploader("Selecione o arquivo W4", type=["csv", "xlsx", "xls"])
 
 if arq_w4:
     if st.button("Converter arquivo"):
@@ -287,6 +259,5 @@ if arq_w4:
 
         except Exception as e:
             st.error(f"Erro: {e}")
-
 else:
     st.info("Faça o upload do arquivo acima.")
