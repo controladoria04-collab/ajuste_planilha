@@ -112,12 +112,10 @@ def converter_w4(df_w4, df_categorias_prep):
 
     col_cat = "Detalhe Conta / Objeto"
 
-    # Remover transferências
     df = df_w4.loc[
         ~df_w4[col_cat].astype(str).str.contains("Transferência Entre Disponíveis", case=False, na=False)
     ].copy()
 
-    # Arquivo categorias
     col_desc_cat = "Descrição da categoria financeira"
     df["nome_base_w4"] = df[col_cat].astype(str).apply(normalize_text)
 
@@ -129,10 +127,6 @@ def converter_w4(df_w4, df_categorias_prep):
     )
 
     df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
-
-    # =======================
-    # PROCESSOS / EMPRÉSTIMO
-    # =======================
 
     fluxo = df.get("Fluxo", pd.Series("", index=df.index)).astype(str).str.lower()
     fluxo_vazio = fluxo.str.strip().isin(["", "none", "nan"])
@@ -154,7 +148,7 @@ def converter_w4(df_w4, df_categorias_prep):
     df.loc[cond_emprestimo & ~cond_pag_emp & ~cond_rec_emp, "Categoria_final"] = proc_original[cond_emprestimo]
 
     # =======================
-    # CLASSIFICAÇÃO DESPESA/RECEITA
+    # CLASSIFICAÇÃO DESPESA/RECEITA (ALTERADA)
     # =======================
 
     detalhe_lower = df[col_cat].astype(str).str.lower()
@@ -178,6 +172,21 @@ def converter_w4(df_w4, df_categorias_prep):
     )
 
     df.loc[cond_fluxo_receita | cond_rec_emp, "is_despesa"] = False
+
+    # NOVA REGRA FINAL
+    cond_sem_def = df["is_despesa"].isna() | (
+        (df["is_despesa"] == False) &
+        (~cond_fluxo_receita) &
+        (~cond_rec_emp) &
+        (~cond_imobilizado) &
+        (~cond_palavra_despesa)
+    )
+
+    cond_pag_proc = proc.str.contains("pagamento", na=False)
+    cond_rec_proc = proc.str.contains("recebimento", na=False)
+
+    df.loc[cond_sem_def & cond_pag_proc, "is_despesa"] = True
+    df.loc[cond_sem_def & cond_rec_proc, "is_despesa"] = False
 
     # =======================
     # VALOR + DATAS
@@ -211,6 +220,7 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Observações"] = ""
 
     return out
+
 
 # ============================
 # CARREGAR ARQUIVO W4
