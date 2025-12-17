@@ -196,11 +196,24 @@ def converter_w4(df_w4, df_categorias_prep):
         converter_valor(v, d) for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
-    data_tes = formatar_data_coluna(df["Data da Tesouraria"])
+    # =======================
+    # NOVO: REMOVER DUPLICADOS PELO "Id Item tesouraria"
+    # =======================
+    df_ignorados = pd.DataFrame()
+    if "Id Item tesouraria" in df.columns:
+        ids = df["Id Item tesouraria"]
+        ids_limpo = ids.astype(str).str.strip()
+        # só considera duplicado quando não é nulo/vazio
+        mask_duplicado = ids.notna() & (ids_limpo != "") & ids_limpo.duplicated(keep="first")
+
+        df_ignorados = df.loc[mask_duplicado].copy()
+        df = df.loc[~mask_duplicado].copy()
 
     # =======================
     # MONTAGEM FINAL
     # =======================
+
+    data_tes = formatar_data_coluna(df["Data da Tesouraria"])
 
     out = pd.DataFrame()
     out["Data de Competência"] = data_tes
@@ -219,7 +232,29 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Centro de Custo"] = ""
     out["Observações"] = ""
 
-    return out
+    # Prévia do que NÃO foi importado (duplicados)
+    out_ignorados = pd.DataFrame()
+    if not df_ignorados.empty:
+        data_tes_ign = formatar_data_coluna(df_ignorados["Data da Tesouraria"])
+
+        out_ignorados = pd.DataFrame()
+        out_ignorados["Data de Competência"] = data_tes_ign
+        out_ignorados["Data de Vencimento"] = data_tes_ign
+        out_ignorados["Data de Pagamento"] = data_tes_ign
+        out_ignorados["Valor"] = df_ignorados["Valor_str_final"]
+        out_ignorados["Categoria"] = df_ignorados["Categoria_final"]
+
+        if "Id Item tesouraria" in df_ignorados.columns:
+            out_ignorados["Descrição"] = df_ignorados["Id Item tesouraria"].astype(str) + " " + df_ignorados["Descrição"].astype(str)
+        else:
+            out_ignorados["Descrição"] = df_ignorados["Descrição"]
+
+        out_ignorados["Cliente/Fornecedor"] = ""
+        out_ignorados["CNPJ/CPF Cliente/Fornecedor"] = ""
+        out_ignorados["Centro de Custo"] = ""
+        out_ignorados["Observações"] = ""
+
+    return out, out_ignorados
 
 
 # ============================
@@ -252,20 +287,35 @@ if arq_w4:
     if st.button("Converter arquivo"):
         try:
             df_w4 = carregar_arquivo_w4(arq_w4)
-            df_final = converter_w4(df_w4, df_cat_prep)
+            df_final, df_ignorados_preview = converter_w4(df_w4, df_cat_prep)
 
             st.success("Arquivo convertido com sucesso!")
 
-            buffer = BytesIO()
-            df_final.to_excel(buffer, index=False, engine="openpyxl")
-            buffer.seek(0)
+            # layout lado a lado
+            col_esq, col_dir = st.columns([2, 1])
 
-            st.download_button(
-                label="🎁 Baixar arquivo convertido",
-                data=buffer,
-                file_name="conta_azul_convertido.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            with col_esq:
+                buffer = BytesIO()
+                df_final.to_excel(buffer, index=False, engine="openpyxl")
+                buffer.seek(0)
+
+                st.download_button(
+                    label="🎁 Baixar arquivo convertido",
+                    data=buffer,
+                    file_name="conta_azul_convertido.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+                st.markdown("#### Prévia do arquivo convertido")
+                st.dataframe(df_final.head(50), use_container_width=True)
+
+            with col_dir:
+                st.markdown("#### Itens ignorados (ID duplicado)")
+                if df_ignorados_preview is None or df_ignorados_preview.empty:
+                    st.info("Nenhum item foi ignorado por duplicidade.")
+                else:
+                    st.warning(f"Foram ignoradas {len(df_ignorados_preview)} linha(s) com 'Id Item tesouraria' repetido.")
+                    st.dataframe(df_ignorados_preview, use_container_width=True, height=520)
 
         except Exception as e:
             st.error(f"Erro: {e}")
