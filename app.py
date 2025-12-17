@@ -58,6 +58,19 @@ h1 {
 """, unsafe_allow_html=True)
 
 # ============================
+# SESSION STATE (NOVO)
+# ============================
+
+if "df_final" not in st.session_state:
+    st.session_state.df_final = None
+if "df_ignorados_preview" not in st.session_state:
+    st.session_state.df_ignorados_preview = None
+if "show_ignorados" not in st.session_state:
+    st.session_state.show_ignorados = False
+if "convertido" not in st.session_state:
+    st.session_state.convertido = False
+
+# ============================
 # FUNÇÕES AUXILIARES
 # ============================
 
@@ -147,10 +160,6 @@ def converter_w4(df_w4, df_categorias_prep):
     df.loc[cond_rec_emp, "Categoria_final"] = proc_original[cond_rec_emp] + " " + pessoa[cond_rec_emp]
     df.loc[cond_emprestimo & ~cond_pag_emp & ~cond_rec_emp, "Categoria_final"] = proc_original[cond_emprestimo]
 
-    # =======================
-    # CLASSIFICAÇÃO DESPESA/RECEITA (ALTERADA)
-    # =======================
-
     detalhe_lower = df[col_cat].astype(str).str.lower()
 
     cond_palavra_despesa = (
@@ -173,7 +182,6 @@ def converter_w4(df_w4, df_categorias_prep):
 
     df.loc[cond_fluxo_receita | cond_rec_emp, "is_despesa"] = False
 
-    # NOVA REGRA FINAL
     cond_sem_def = df["is_despesa"].isna() | (
         (df["is_despesa"] == False) &
         (~cond_fluxo_receita) &
@@ -188,16 +196,12 @@ def converter_w4(df_w4, df_categorias_prep):
     df.loc[cond_sem_def & cond_pag_proc, "is_despesa"] = True
     df.loc[cond_sem_def & cond_rec_proc, "is_despesa"] = False
 
-    # =======================
-    # VALOR + DATAS
-    # =======================
-
     df["Valor_str_final"] = [
         converter_valor(v, d) for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
     # =======================
-    # REMOVER DUPLICADOS PELO "Id Item tesouraria" + PREPARAR PREVIEW IGNORADOS
+    # REMOVER DUPLICADOS PELO "Id Item tesouraria" + PREVIEW IGNORADOS
     # =======================
     df_ignorados = pd.DataFrame()
     if "Id Item tesouraria" in df.columns:
@@ -207,10 +211,6 @@ def converter_w4(df_w4, df_categorias_prep):
 
         df_ignorados = df.loc[mask_duplicado].copy()
         df = df.loc[~mask_duplicado].copy()
-
-    # =======================
-    # MONTAGEM FINAL
-    # =======================
 
     data_tes = formatar_data_coluna(df["Data da Tesouraria"])
 
@@ -231,7 +231,6 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Centro de Custo"] = ""
     out["Observações"] = ""
 
-    # Preview SOMENTE do que NÃO foi importado (duplicados)
     out_ignorados = pd.DataFrame()
     if not df_ignorados.empty:
         data_tes_ign = formatar_data_coluna(df_ignorados["Data da Tesouraria"])
@@ -279,41 +278,57 @@ df_cat_prep = preparar_categorias(df_cat_raw)
 st.title("🎄 Conversor W4 🎄")
 st.markdown("### Envie o arquivo W4 (CSV ou Excel)")
 
-arq_w4 = st.file_uploader("Selecione o arquivo W4", type=["csv", "xlsx", "xls"])
+# Colunas desde o topo (pra aparecer no lugar circulado)
+col_esq, col_dir = st.columns([2, 1])
 
-if arq_w4:
-    if st.button("Converter arquivo"):
+with col_esq:
+    arq_w4 = st.file_uploader("Selecione o arquivo W4", type=["csv", "xlsx", "xls"])
+
+    if arq_w4 and st.button("Converter arquivo", key="btn_converter"):
         try:
             df_w4 = carregar_arquivo_w4(arq_w4)
             df_final, df_ignorados_preview = converter_w4(df_w4, df_cat_prep)
 
+            # salva no session_state (pra não sumir ao clicar em outros botões)
+            st.session_state.df_final = df_final
+            st.session_state.df_ignorados_preview = df_ignorados_preview
+            st.session_state.convertido = True
+            st.session_state.show_ignorados = False  # começa fechado
+
             st.success("Arquivo convertido com sucesso!")
-
-            col_esq, col_dir = st.columns([2, 1])
-
-            with col_esq:
-                buffer = BytesIO()
-                df_final.to_excel(buffer, index=False, engine="openpyxl")
-                buffer.seek(0)
-
-                st.download_button(
-                    label="🎁 Baixar arquivo convertido",
-                    data=buffer,
-                    file_name="conta_azul_convertido.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-            with col_dir:
-                st.markdown("#### Itens ignorados (ID duplicado)")
-                if df_ignorados_preview is None or df_ignorados_preview.empty:
-                    st.info("Nenhum item foi ignorado por duplicidade.")
-                else:
-                    st.warning(f"Foram ignoradas {len(df_ignorados_preview)} linha(s) com 'Id Item tesouraria' repetido.")
-
-                    if st.button("Ver prévia dos itens ignorados"):
-                        st.dataframe(df_ignorados_preview, use_container_width=True, height=520)
 
         except Exception as e:
             st.error(f"Erro: {e}")
-else:
+
+    # Botão de download só aparece quando já converteu
+    if st.session_state.convertido and st.session_state.df_final is not None:
+        buffer = BytesIO()
+        st.session_state.df_final.to_excel(buffer, index=False, engine="openpyxl")
+        buffer.seek(0)
+
+        st.download_button(
+            label="🎁 Baixar arquivo convertido",
+            data=buffer,
+            file_name="conta_azul_convertido.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+with col_dir:
+    st.markdown("#### Itens ignorados (ID duplicado)")
+
+    df_ign = st.session_state.df_ignorados_preview
+
+    if (df_ign is None) or df_ign.empty:
+        st.info("Nenhum item foi ignorado por duplicidade.")
+    else:
+        st.warning(f"Foram ignoradas {len(df_ign)} linha(s) com 'Id Item tesouraria' repetido.")
+
+        if st.button("Ver prévia dos itens ignorados", key="btn_ver_ign"):
+            st.session_state.show_ignorados = not st.session_state.show_ignorados
+
+        if st.session_state.show_ignorados:
+            st.dataframe(df_ign, use_container_width=True, height=520)
+
+# mensagem quando ainda não enviou arquivo
+if not st.session_state.convertido:
     st.info("Faça o upload do arquivo acima.")
