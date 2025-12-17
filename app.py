@@ -309,7 +309,9 @@ if arq_w4:
                     st.info("Nenhum item foi ignorado por duplicidade.")
                 else:
                     st.warning(f"Foram ignoradas {len(df_ignorados_preview)} linha(s) com 'Id Item tesouraria' repetido.")
-                    st.dataframe(df_ignorados_preview, use_container_width=True, height=520)
+
+                    if st.button("Ver prévia dos itens ignorados"):
+                        st.dataframe(df_ignorados_preview, use_container_width=True, height=520)
 
         except Exception as e:
             st.error(f"Erro: {e}")
