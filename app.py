@@ -197,13 +197,12 @@ def converter_w4(df_w4, df_categorias_prep):
     ]
 
     # =======================
-    # NOVO: REMOVER DUPLICADOS PELO "Id Item tesouraria"
+    # REMOVER DUPLICADOS PELO "Id Item tesouraria" + PREPARAR PREVIEW IGNORADOS
     # =======================
     df_ignorados = pd.DataFrame()
     if "Id Item tesouraria" in df.columns:
         ids = df["Id Item tesouraria"]
         ids_limpo = ids.astype(str).str.strip()
-        # só considera duplicado quando não é nulo/vazio
         mask_duplicado = ids.notna() & (ids_limpo != "") & ids_limpo.duplicated(keep="first")
 
         df_ignorados = df.loc[mask_duplicado].copy()
@@ -232,12 +231,11 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Centro de Custo"] = ""
     out["Observações"] = ""
 
-    # Prévia do que NÃO foi importado (duplicados)
+    # Preview SOMENTE do que NÃO foi importado (duplicados)
     out_ignorados = pd.DataFrame()
     if not df_ignorados.empty:
         data_tes_ign = formatar_data_coluna(df_ignorados["Data da Tesouraria"])
 
-        out_ignorados = pd.DataFrame()
         out_ignorados["Data de Competência"] = data_tes_ign
         out_ignorados["Data de Vencimento"] = data_tes_ign
         out_ignorados["Data de Pagamento"] = data_tes_ign
@@ -291,7 +289,6 @@ if arq_w4:
 
             st.success("Arquivo convertido com sucesso!")
 
-            # layout lado a lado
             col_esq, col_dir = st.columns([2, 1])
 
             with col_esq:
@@ -305,9 +302,6 @@ if arq_w4:
                     file_name="conta_azul_convertido.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
-                st.markdown("#### Prévia do arquivo convertido")
-                st.dataframe(df_final.head(50), use_container_width=True)
 
             with col_dir:
                 st.markdown("#### Itens ignorados (ID duplicado)")
