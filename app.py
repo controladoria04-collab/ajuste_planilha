@@ -47,15 +47,12 @@ h1 {
 """, unsafe_allow_html=True)
 
 # ============================
-# FUNÇÕES AUXILIARES EXISTENTES
+# FUNÇÕES AUXILIARES (ORIGINAIS)
 # ============================
 
 def normalize_text(texto):
     texto = str(texto).lower().strip()
-    texto = ''.join(
-        c for c in unicodedata.normalize('NFKD', texto)
-        if not unicodedata.combining(c)
-    )
+    texto = ''.join(c for c in unicodedata.normalize('NFKD', texto) if not unicodedata.combining(c))
     texto = re.sub(r'[^a-z0-9]+', ' ', texto)
     return re.sub(r'\s+', ' ', texto).strip()
 
@@ -92,7 +89,7 @@ def converter_valor(valor_str, is_despesa):
 
 
 # ============================
-# FUNÇÃO PRINCIPAL EXISTENTE
+# FUNÇÃO PRINCIPAL (ORIGINAL)
 # ============================
 
 def converter_w4(df_w4, df_categorias_prep):
@@ -100,8 +97,9 @@ def converter_w4(df_w4, df_categorias_prep):
     col_cat = "Detalhe Conta / Objeto"
 
     df = df_w4.loc[
-        ~df_w4[col_cat].astype(str)
-        .str.contains("Transferência Entre Disponíveis", case=False, na=False)
+        ~df_w4[col_cat].astype(str).str.contains(
+            "Transferência Entre Disponíveis", case=False, na=False
+        )
     ].copy()
 
     col_desc_cat = "Descrição da categoria financeira"
@@ -114,9 +112,7 @@ def converter_w4(df_w4, df_categorias_prep):
         how="left"
     )
 
-    df["Categoria_final"] = df[col_desc_cat].where(
-        df[col_desc_cat].notna(), df[col_cat]
-    )
+    df["Categoria_final"] = df[col_desc_cat].where(df[col_desc_cat].notna(), df[col_cat])
 
     fluxo = df.get("Fluxo", "").astype(str).str.lower()
     df["is_despesa"] = fluxo.str.contains("despesa", na=False)
@@ -144,8 +140,9 @@ def converter_w4(df_w4, df_categorias_prep):
 
     return out, pd.DataFrame()
 
+
 # ============================
-# NOVAS FUNÇÕES – OFX
+# NOVO – OFX (SOMENTE RECEITAS)
 # ============================
 
 def carregar_ofx(arq_ofx):
@@ -154,19 +151,15 @@ def carregar_ofx(arq_ofx):
 
     dados = []
     for t in conta.statement.transactions:
-        if float(t.amount) > 0:  # SOMENTE RECEITAS
+        if float(t.amount) > 0:
             dados.append({
                 "data": t.date.strftime("%d/%m/%Y"),
-                "valor": round(float(t.amount), 2),
-                "descricao_ofx": t.memo or "",
-                "usado": False
+                "valor": round(float(t.amount), 2)
             })
     return pd.DataFrame(dados)
 
 
 def valor_str_para_float(v):
-    if pd.isna(v):
-        return None
     try:
         return float(str(v).replace(".", "").replace(",", "."))
     except:
@@ -174,70 +167,50 @@ def valor_str_para_float(v):
 
 
 # ============================
-# QUEBRA APENAS COLETA DE MISSA
+# NOVO – QUEBRA APENAS COLETA DE MISSA
 # ============================
 
-def quebrar_coleta_missa(df_convertido, df_ofx):
-    novas_linhas = []
-    relatorio = []
+def quebrar_coleta_missa(df_final, df_ofx):
+    resultado = []
 
-    for data in df_convertido["Data de Competência"].dropna().unique():
+    for _, row in df_final.iterrows():
 
-        w4_dia = df_convertido[
-            df_convertido["Data de Competência"] == data
-        ].copy()
+        categoria = str(row["Categoria"]).lower()
+        valor = valor_str_para_float(row["Valor"])
+        data = row["Data de Competência"]
 
-        ofx_dia = df_ofx[df_ofx["data"] == data].copy()
+        # manter tudo que NÃO for coleta
+        if "coleta" not in categoria or valor is None or valor <= 0:
+            resultado.append(row)
+            continue
 
-        for idx, row in w4_dia.iterrows():
+        ofx_dia = df_ofx[df_ofx["data"] == data]
 
-            valor = valor_str_para_float(row["Valor"])
-            categoria = str(row["Categoria"]).lower()
-
-            # Apenas receitas
-            if valor is None or valor <= 0:
-                novas_linhas.append(row)
+        # se valor existir no OFX → NÃO quebra
+        if not ofx_dia.empty:
+            if (ofx_dia["valor"].round(2) == round(valor, 2)).any():
+                resultado.append(row)
                 continue
 
-            # Apenas coleta de missa
-            if "coleta" not in categoria:
-                novas_linhas.append(row)
-                continue
+        # tentar quebrar
+        soma = 0
+        partes = []
 
-            # Se valor existe no OFX → NÃO quebra
-            if not ofx_dia.empty:
-                if (ofx_dia["valor"].round(2) == round(valor, 2)).any():
-                    novas_linhas.append(row)
-                    continue
+        for _, tx in ofx_dia.iterrows():
+            soma = round(soma + tx["valor"], 2)
+            partes.append(tx["valor"])
 
-            # Tentar quebrar
-            soma = 0
-            usados = []
+            if abs(soma - valor) < 0.01:
+                for v in partes:
+                    nova = row.copy()
+                    nova["Valor"] = f"{v:.2f}".replace(".", ",")
+                    resultado.append(nova)
+                break
+        else:
+            resultado.append(row)
 
-            for _, tx in ofx_dia.iterrows():
-                soma = round(soma + tx["valor"], 2)
-                usados.append(tx)
+    return pd.DataFrame(resultado)
 
-                if abs(soma - valor) < 0.01:
-                    for u in usados:
-                        nova = row.copy()
-                        nova["Valor"] = f"{u['valor']:.2f}".replace(".", ",")
-                        nova["Descrição"] = (
-                            f"{row['Descrição']} | {u['descricao_ofx']}"
-                        ).strip(" |")
-                        novas_linhas.append(nova)
-
-                    relatorio.append({
-                        "Data": data,
-                        "Categoria": row["Categoria"],
-                        "Valor Original": row["Valor"],
-                        "Quebrado em": len(usados)
-                    })
-                    break
-            else:
-                novas_linhas.append(row)
-
-    return pd.DataFrame(novas_linhas), pd.DataFrame(relatorio)
 
 # ============================
 # CARREGAR ARQUIVO W4
@@ -247,6 +220,7 @@ def carregar_arquivo_w4(arq):
     if arq.name.lower().endswith((".xlsx", ".xls")):
         return pd.read_excel(arq)
     return pd.read_csv(arq, sep=";", encoding="latin1")
+
 
 # ============================
 # CATEGORIAS
@@ -272,11 +246,7 @@ if arq_w4 and st.button("Converter arquivo"):
 
         if arq_ofx:
             df_ofx = carregar_ofx(arq_ofx)
-            df_final, rel = quebrar_coleta_missa(df_final, df_ofx)
-
-            if not rel.empty:
-                st.markdown("### 📊 Coletas de missa quebradas")
-                st.dataframe(rel, use_container_width=True)
+            df_final = quebrar_coleta_missa(df_final, df_ofx)
 
         buffer = BytesIO()
         df_final.to_excel(buffer, index=False, engine="openpyxl")
