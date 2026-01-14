@@ -13,50 +13,6 @@ st.set_page_config(
 )
 
 # ============================
-# CSS – NATAL 🎄
-# ============================
-st.markdown(
-    """
-    <style>
-    body {
-        background-image: url('https://images.unsplash.com/photo-1513670800287-29d3b6b4a3d8');
-        background-size: cover;
-        background-repeat: no-repeat;
-        background-attachment: fixed;
-    }
-
-    .block-container {
-        backdrop-filter: blur(6px);
-        background: rgba(255, 255, 255, 0.75);
-        padding: 2rem;
-        border-radius: 12px;
-    }
-
-    h1 {
-        text-align: center;
-        color: #8B0000 !important;
-        font-weight: 900 !important;
-        text-shadow: 1px 1px 2px #ffffff;
-    }
-
-    .stButton > button {
-        background-color: #b30000;
-        color: white;
-        border-radius: 10px;
-        padding: 0.6rem 1.2rem;
-        border: none;
-        font-weight: bold;
-    }
-
-    .stButton > button:hover {
-        background-color: #660000;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# ============================
 # FUNÇÕES AUXILIARES
 # ============================
 def normalize_text(texto):
@@ -89,18 +45,14 @@ def formatar_data_coluna(serie):
     return datas.dt.strftime("%d/%m/%Y")
 
 
-def converter_valor(valor_str, is_despesa):
-    if pd.isna(valor_str):
-        return ""
-
-    if isinstance(valor_str, (int, float)):
-        base = f"{valor_str:.2f}".replace(".", ",")
-    else:
-        base = str(valor_str).strip()
-
-    base_sem_sinal = base.lstrip("+- ").strip()
-    return ("-" if is_despesa else "") + base_sem_sinal
-
+def converter_valor_numerico(valor, is_despesa):
+    if pd.isna(valor):
+        return None
+    try:
+        valor = float(valor)
+    except:
+        return None
+    return -abs(valor) if is_despesa else abs(valor)
 
 # ============================
 # FUNÇÃO PRINCIPAL
@@ -207,8 +159,8 @@ def converter_w4(df_w4, df_categorias_prep):
     df.loc[cond_sem_def & cond_pag_proc, "is_despesa"] = True
     df.loc[cond_sem_def & cond_rec_proc, "is_despesa"] = False
 
-    df["Valor_str_final"] = [
-        converter_valor(v, d)
+    df["Valor_final"] = [
+        converter_valor_numerico(v, d)
         for v, d in zip(df["Valor total"], df["is_despesa"])
     ]
 
@@ -233,7 +185,7 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Data de Competência"] = data_tes
     out["Data de Vencimento"] = data_tes
     out["Data de Pagamento"] = data_tes
-    out["Valor"] = df["Valor_str_final"]
+    out["Valor"] = df["Valor_final"]
     out["Categoria"] = df["Categoria_final"]
 
     if "Id Item tesouraria" in df.columns:
@@ -250,33 +202,7 @@ def converter_w4(df_w4, df_categorias_prep):
     out["Centro de Custo"] = ""
     out["Observações"] = ""
 
-    out_ignorados = pd.DataFrame()
-
-    if not df_ignorados.empty:
-        data_tes_ign = formatar_data_coluna(df_ignorados["Data da Tesouraria"])
-
-        out_ignorados["Data de Competência"] = data_tes_ign
-        out_ignorados["Data de Vencimento"] = data_tes_ign
-        out_ignorados["Data de Pagamento"] = data_tes_ign
-        out_ignorados["Valor"] = df_ignorados["Valor_str_final"]
-        out_ignorados["Categoria"] = df_ignorados["Categoria_final"]
-
-        if "Id Item tesouraria" in df_ignorados.columns:
-            out_ignorados["Descrição"] = (
-                df_ignorados["Id Item tesouraria"].astype(str)
-                + " "
-                + df_ignorados["Descrição"].astype(str)
-            )
-        else:
-            out_ignorados["Descrição"] = df_ignorados["Descrição"]
-
-        out_ignorados["Cliente/Fornecedor"] = ""
-        out_ignorados["CNPJ/CPF Cliente/Fornecedor"] = ""
-        out_ignorados["Centro de Custo"] = ""
-        out_ignorados["Observações"] = ""
-
-    return out, out_ignorados
-
+    return out, df_ignorados
 
 # ============================
 # CARREGAR ARQUIVO W4
@@ -285,7 +211,6 @@ def carregar_arquivo_w4(arq):
     if arq.name.lower().endswith((".xlsx", ".xls")):
         return pd.read_excel(arq)
     return pd.read_csv(arq, sep=";", encoding="latin1")
-
 
 # ============================
 # CARREGAR CATEGORIAS
@@ -296,7 +221,7 @@ df_cat_prep = preparar_categorias(df_cat_raw)
 # ============================
 # INTERFACE
 # ============================
-st.title("🎄 Conversor W4 🎄")
+st.title("Conversor W4")
 st.markdown("### Envie o arquivo W4 (CSV ou Excel)")
 
 arq_w4 = st.file_uploader(
@@ -305,35 +230,26 @@ arq_w4 = st.file_uploader(
 )
 
 if arq_w4:
-    if st.button("Converter arquivo"):
-        try:
-            df_w4 = carregar_arquivo_w4(arq_w4)
-            df_final, df_ignorados_preview = converter_w4(
-                df_w4,
-                df_cat_prep
-            )
+    try:
+        df_w4 = carregar_arquivo_w4(arq_w4)
+        df_final, _ = converter_w4(df_w4, df_cat_prep)
 
-            st.success("Arquivo convertido com sucesso!")
+        buffer = BytesIO()
+        df_final.to_excel(
+            buffer,
+            index=False,
+            engine="openpyxl"
+        )
+        buffer.seek(0)
 
-            col_esq, col_dir = st.columns([2, 1])
+        st.download_button(
+            label="📥 Baixar arquivo convertido",
+            data=buffer,
+            file_name="conta_azul_convertido.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-            with col_esq:
-                buffer = BytesIO()
-                df_final.to_excel(
-                    buffer,
-                    index=False,
-                    engine="openpyxl"
-                )
-                buffer.seek(0)
-
-                st.download_button(
-                    label="🎁 Baixar arquivo convertido",
-                    data=buffer,
-                    file_name="conta_azul_convertido.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-        except Exception as e:
-            st.error(f"Erro: {e}")
+    except Exception as e:
+        st.error(f"Erro: {e}")
 else:
     st.info("Faça o upload do arquivo acima.")
